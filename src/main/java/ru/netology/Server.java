@@ -49,9 +49,20 @@ public class Server {
 
             final Path filePath = Path.of(".", "public", path);
             final String mimeType = Files.probeContentType(filePath);
-            if (path.equals("/classic.html")) return;
+            if (path.equals("/classic.html")) {
+                specialForClassic(mimeType, filePath, out);
+            }
 
-
+            final long length = Files.size(filePath);
+            out.write((
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Content-Type: " + mimeType + "\r\n" +
+                            "Content-Length: " + length + "\r\n" +
+                            "Connection: close\r\n" +
+                            "\r\n"
+            ).getBytes());
+            Files.copy(filePath, out);
+            out.flush();
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -71,36 +82,21 @@ public class Server {
         return false;
     }
 
-    // special case for classic
-//    public void specialForClassic() {
-//        if (path.equals("/classic.html")) {
-//            final var template = Files.readString(filePath);
-//            final var content = template.replace(
-//                    "{time}",
-//                    LocalDateTime.now().toString()
-//            ).getBytes();
-//            out.write((
-//                    "HTTP/1.1 200 OK\r\n" +
-//                            "Content-Type: " + mimeType + "\r\n" +
-//                            "Content-Length: " + content.length + "\r\n" +
-//                            "Connection: close\r\n" +
-//                            "\r\n"
-//            ).getBytes());
-//            out.write(content);
-//            out.flush();
-//            continue;
-//        }
-//
-//        final var length = Files.size(filePath);
-//        out.write((
-//                "HTTP/1.1 200 OK\r\n" +
-//                        "Content-Type: " + mimeType + "\r\n" +
-//                        "Content-Length: " + length + "\r\n" +
-//                        "Connection: close\r\n" +
-//                        "\r\n"
-//        ).getBytes());
-//        Files.copy(filePath, out);
-//        out.flush();
-//
-//    }
+    // специально для classic
+    public void specialForClassic(String mimeType, Path filePath, BufferedOutputStream out) throws IOException {
+        final var template = Files.readString(filePath);
+        final var content = template.replace(
+                "{time}",
+                LocalDateTime.now().toString()
+        ).getBytes();
+        out.write((
+                "HTTP/1.1 200 OK\r\n" +
+                        "Content-Type: " + mimeType + "\r\n" +
+                        "Content-Length: " + content.length + "\r\n" +
+                        "Connection: close\r\n" +
+                        "\r\n"
+        ).getBytes());
+        out.write(content);
+        out.flush();
+    }
 }
