@@ -11,10 +11,14 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
 
 public class Server {
-    private static final Integer PORT = 8379;
+    private final int PORT = 8379;
     private final List<String> validPaths = new ArrayList<>();
+    private final int POOL_SIZE = 64;
+
 
     public Server(List<String> validPaths) {
         this.validPaths.addAll(validPaths);
@@ -22,10 +26,24 @@ public class Server {
 
     // метод запуска
     public void startServer() {
+        ThreadPoolExecutor threadPool = (ThreadPoolExecutor) Executors.newFixedThreadPool(POOL_SIZE);
         try (final ServerSocket serverSocket = new ServerSocket(PORT)) {
             while (true) {
-                try (Socket socket = serverSocket.accept()) {
-                    processConnection(socket);
+                try {
+                    Socket socket = serverSocket.accept();
+                    threadPool.submit(() -> {
+                        try {
+                            processConnection(socket);
+                        } finally {
+                            try {
+                                socket.close();
+                            } catch (IOException e) {
+                                e.printStackTrace();
+                            }
+                        }
+                    });
+                } catch (IOException e) {
+                    e.printStackTrace();
                 }
             }
         } catch (IOException e) {
@@ -68,7 +86,7 @@ public class Server {
         }
     }
 
-    public boolean isError404(BufferedOutputStream out, String path) throws IOException{
+    public boolean isError404(BufferedOutputStream out, String path) throws IOException {
         if (!validPaths.contains(path)) {
             out.write((
                     "HTTP/1.1 404 Not Found\r\n" +
