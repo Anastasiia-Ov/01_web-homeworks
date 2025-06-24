@@ -6,28 +6,31 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 
 public class Server {
-    private final int PORT = 8379;
-    private final List<String> validPaths = new ArrayList<>();
+    private int port;
+    private final List<String> validPaths = List.of(
+            "/index.html", "/spring.svg", "/spring.png",
+            "/resources.html", "/styles.css", "/app.js", "/links.html",
+            "/forms.html", "/classic.html", "/events.html", "/events.js");
     private final int POOL_SIZE = 64;
+    private final Map<String, Map<String, Handler>> handlers = new HashMap<>();
 
 
-    public Server(List<String> validPaths) {
-        this.validPaths.addAll(validPaths);
-    }
+//    public Server(List<String> validPaths) {
+//        this.validPaths.addAll(validPaths);
+//    }
 
     // метод запуска
     public void startServer() {
         ThreadPoolExecutor threadPool = (ThreadPoolExecutor) Executors.newFixedThreadPool(POOL_SIZE);
-        try (final ServerSocket serverSocket = new ServerSocket(PORT)) {
+        try (final ServerSocket serverSocket = new ServerSocket(port)) {
             while (true) {
                 try {
                     Socket socket = serverSocket.accept();
@@ -55,66 +58,69 @@ public class Server {
     public void processConnection(Socket socket) {
         try (BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
              BufferedOutputStream out = new BufferedOutputStream(socket.getOutputStream())) {
-
             // must be in form GET /path HTTP/1.1
             final String requestLine = in.readLine();
             final String[] parts = requestLine.split(" ");
 
             if (parts.length != 3) return;
 
+            final String method = parts[0];
             final String path = parts[1];
-            if (isError404(out, path)) return;
 
-            final Path filePath = Path.of(".", "public", path);
-            final String mimeType = Files.probeContentType(filePath);
-            if (path.equals("/classic.html")) {
-                specialForClassic(mimeType, filePath, out);
+            Map<String, String> headers = new HashMap<>();
+            String line;
+            while (!(line = in.readLine()).isEmpty()) {
+                int colonPos = line.indexOf(":");
+                if (colonPos != -1) {
+                    String headerName = line.substring(0, colonPos).trim();
+                    String headerValue = line.substring(colonPos + 1).trim();
+                    headers.put(headerName.toLowerCase(), headerValue);
+                }
             }
 
-            final long length = Files.size(filePath);
-            out.write((
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Content-Type: " + mimeType + "\r\n" +
-                            "Content-Length: " + length + "\r\n" +
-                            "Connection: close\r\n" +
-                            "\r\n"
-            ).getBytes());
-            Files.copy(filePath, out);
-            out.flush();
+            String body = "";
+            if ("POST".equalsIgnoreCase(method) || "PUT".equalsIgnoreCase(method)) {
+                String contentLengthStr = headers.get("content-length");
+                if (contentLengthStr != null) {
+                    int contentLength = Integer.parseInt(contentLengthStr);
+                    char[] bodyChars = new char[contentLength];
+                    in.read(bodyChars);
+                    body = new String(bodyChars);
+                }
+            }
+
+            Request request = new Request(method, path, headers, body);
+
+            Handler handler = null;
+            Map<String, Handler> methodHandlers = handlers.get(request.getMethod().toUpperCase());
+            if (methodHandlers != null) {
+                handler = methodHandlers.get(request.getPath());
+            }
+
+            if (handler != null) {
+                handler.handle(request, out);
+            } else {
+                // Отправка 404 Not Found
+                String responseBody = "404 Not Found";
+                out.write(("HTTP/1.1 404 Not Found\r\n" +
+                        "Content-Type: text/plain\r\n" +
+                        "Content-Length: " + responseBody.length() + "\r\n" +
+                        "Connection: close\r\n" +
+                        "\r\n").getBytes());
+                out.write(responseBody.getBytes());
+                out.flush();
+            }
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
 
-    public boolean isError404(BufferedOutputStream out, String path) throws IOException {
-        if (!validPaths.contains(path)) {
-            out.write((
-                    "HTTP/1.1 404 Not Found\r\n" +
-                            "Content-Length: 0\r\n" +
-                            "Connection: close\r\n" +
-                            "\r\n"
-            ).getBytes());
-            out.flush();
-            return true;
-        }
-        return false;
+    public void addHandler(String method, String path, Handler handler) {
+        handlers.computeIfAbsent(method.toUpperCase(), k -> new HashMap<>()).put(path, handler);
     }
 
-    // специально для classic
-    public void specialForClassic(String mimeType, Path filePath, BufferedOutputStream out) throws IOException {
-        final var template = Files.readString(filePath);
-        final var content = template.replace(
-                "{time}",
-                LocalDateTime.now().toString()
-        ).getBytes();
-        out.write((
-                "HTTP/1.1 200 OK\r\n" +
-                        "Content-Type: " + mimeType + "\r\n" +
-                        "Content-Length: " + content.length + "\r\n" +
-                        "Connection: close\r\n" +
-                        "\r\n"
-        ).getBytes());
-        out.write(content);
-        out.flush();
+    public void listen(int port) {
+        this.port = port;
+        startServer();
     }
 }
